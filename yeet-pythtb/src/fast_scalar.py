@@ -1,4 +1,4 @@
-from numba import njit
+from numba import njit, prange
 from numba.np.ufunc import parallel
 from numba.types import float64,int64,int32,complex128
 import numpy as np
@@ -26,7 +26,8 @@ def _nicefy_eig(eval,eig):
 
 #scalar implementation
 # @njit('complex128[:,::1](int64,int32[::1],float64[:,::1],int64,float64[::1],complex128[::1],int32[:,::1],int32[:,::1],float64[::1])')
-@njit
+# Parallel = true here leads to bizzare noisy bands
+@njit(parallel=False,fastmath=True)
 def gen_ham(dim_k,per,orb,norb,site_energies,hst,hind,hR,k_input):
         """Generate Hamiltonian for a certain k-point,
         K-point is given in reduced coordinates!"""
@@ -59,20 +60,20 @@ def gen_ham(dim_k,per,orb,norb,site_energies,hst,hind,hR,k_input):
         return ham
 #scalar implementation
 # @njit('Tuple((float64[::1],complex128[:,::1]))(complex128[:,::1],boolean)')
-@njit
+@njit(parallel=True,fastmath=True)
 def sol_ham(ham,eig_vectors=False):
         """Solves Hamiltonian and returns eigenvectors, eigenvalues"""
         # reshape matrix first
         ham
         # check that matrix is hermitian
-        if np.real(np.max(ham-ham.T.conj()))>1.0E-9:
-            raise Exception("\n\nHamiltonian matrix is not hermitian?!")
+        #if np.real(np.max(ham-ham.T.conj()))>1.0E-9:
+        #    raise Exception("\n\nHamiltonian matrix is not hermitian?!")
         #solve matrix
-        if eig_vectors==False: # only find eigenvalues
+        eig = np.zeros(ham.shape,dtype="complex128")
+        if not eig_vectors: # only find eigenvalues
             eval=np.linalg.eigvalsh(ham)
             # sort eigenvalues and convert to real numbers
             eval=_nicefy_eval(eval)
-            return (eval,np.zeros((1,1),dtype="complex128"))
         else: # find eigenvalues and eigenvectors
             (eval,eig)=np.linalg.eigh(ham)
             # transpose matrix eig since otherwise it is confusing
@@ -81,10 +82,10 @@ def sol_ham(ham,eig_vectors=False):
             # sort evectors, eigenvalues and convert to real numbers
             (eval,eig)=_nicefy_eig(eval,eig)
             # reshape eigenvectors if doing a spinfull calculation
-            return (eval,eig)
+        return (eval,eig)
 #scalar implementation
 # @njit('Tuple((float64[:,::1],complex128[:,:,::1]))(int64,int32[::1],float64[:,::1],int64,int64,float64[::1],complex128[::1],int32[:,::1],int32[:,::1],float64[:,::1],boolean)',parallel=True)
-@njit(parallel=True)
+@njit(parallel=True,fastmath=True)  
 def solve_all(dim_k,per,orb,norb,nsta,site_energies,hst,hind,hR,k_list,eig_vectors=False):
     nkp=len(k_list) # number of k points
     # first initialize matrices for all return data
@@ -93,21 +94,15 @@ def solve_all(dim_k,per,orb,norb,nsta,site_energies,hst,hind,hR,k_list,eig_vecto
     #    indices are [band,kpoint,orbital,spin]
     ret_evec = np.zeros((nsta,nkp,norb),dtype="complex128")
     # go over all kpoints
-    for i in range(k_list.shape[0]):
+    for i in prange(k_list.shape[0]):
         # generate Hamiltonian at that point
         ham = gen_ham(dim_k,per,orb,norb,site_energies,hst,hind,hR,k_list[i])
         # solve Hamiltonian
-        if not eig_vectors:
-            eval, evec = sol_ham(ham,eig_vectors=eig_vectors)
-            ret_eval[:,i] = eval[:]
-        else:
-            eval, evec = sol_ham(ham,eig_vectors=eig_vectors)
-            ret_eval[:,i]=eval[:]
-            ret_evec[:,i,:]=evec[:,:]
+        ret_eval[:,i], ret_evec[:,i,:] = sol_ham(ham,eig_vectors=eig_vectors)
     # return stuff
-    if eig_vectors==False:
-        # indices of eval are [band,kpoint]
-        return ret_eval, np.zeros((1,1,1),dtype="complex128")
-    else:
-        # indices of eval are [band,kpoint] for evec are [band,kpoint,orbital,(spin)]
-        return (ret_eval,ret_evec)
+    #if not eig_vectors:
+    #    # indices of eval are [band,kpoint]
+    #    return ret_eval, np.zeros((1,1,1),dtype="complex128")
+    #else:
+    # indices of eval are [band,kpoint] for evec are [band,kpoint,orbital,(spin)]
+    return (ret_eval,ret_evec)
