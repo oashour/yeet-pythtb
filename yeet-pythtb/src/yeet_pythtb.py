@@ -1142,90 +1142,75 @@ matrix.""")
 
 
         """
-        if self._dim_k ==0:
+        # Run checks
+        if self._dim_k == 0:
             raise Exception("\n\nModel is already finite")
-        if type(num).__name__!='int':
+        if not isinstance(num, int):
             raise Exception("\n\nArgument num not an integer")
-
-        # check value of num
-        if num<1:
+        if num < 1:
             raise Exception("\n\nArgument num must be positive!")
-        if num==1 and glue_edgs==True:
+        if num == 1 and glue_edgs:
             raise Exception("\n\nCan't have num==1 and glueing of the edges!")
 
-        # generate orbitals of a finite model
-        fin_orb=[]
-        onsite=[] # store also onsite energies
-        for i in range(num): # go over all cells in finite direction
-            for j in range(self._norb): # go over all orbitals in one cell
-                # make a copy of j-th orbital
-                orb_tmp=np.copy(self._orb[j,:])
-                # change coordinate along finite direction
-                orb_tmp[fin_dir]+=float(i)
-                # add to the list
-                fin_orb.append(orb_tmp)
-                # do the onsite energies at the same time
-                onsite.append(self._site_energies[j])
-        onsite=np.array(onsite)
-        fin_orb=np.array(fin_orb)
+        # Find orbitals and onsite energies of the finite model
+        def shift(cell_num, fin_dir):
+            return np.array([cell_num if i == fin_dir else 0 for i in range(3)])
+        fin_orb = np.array(
+            [orb.copy() + shift(i, fin_dir) for i in range(num) for orb in self._orb]
+        )
+        onsite = np.tile(self._site_energies, num)
 
-        # generate periodic directions of a finite model
-        fin_per=copy.deepcopy(self._per)
-        # find if list of periodic directions contains the one you
-        # want to make finite
-        if fin_per.count(fin_dir)!=1:
+        # Generate tb_model object
+        fin_per = copy.copy(self._per)
+        if fin_per.count(fin_dir) != 1:
             raise Exception("\n\nCan not make model finite along this direction!")
-        # remove index which is no longer periodic
         fin_per.remove(fin_dir)
+        fin_model = tb_model(
+            self._dim_k - 1,
+            self._dim_r,
+            self._lat.copy(),
+            fin_orb,
+            fin_per,
+            self._nspin,
+        )
+        fin_model._assume_position_operator_diagonal = (
+            self._assume_position_operator_diagonal
+        ) # Necessary to inherit for W90-sourced models
 
-        # generate object of tb_model type that will correspond to a cutout
-        fin_model=tb_model(self._dim_k-1,
-                           self._dim_r,
-                           copy.deepcopy(self._lat),
-                           fin_orb,
-                           fin_per,
-                           self._nspin)
+        # Add all on-site energies
+        fin_model._site_energies=np.array([self._val_to_block(o) for o in onsite])
+        self._site_energies_specified[:]=True
 
-        # remember if came from w90
-        fin_model._assume_position_operator_diagonal=self._assume_position_operator_diagonal
+        # Add all the hoppings
+        hoppings = []
+        for cell_num in range(num): 
+            for hopping in self._hoppings:
+                # Extract the original model hoppings and shift them
+                amp = hopping[0] # Unshifted
+                ind_R = hopping[3].copy()
+                jump_fin = ind_R[fin_dir]
+                if fin_model._dim_k != 0:
+                    ind_R[fin_dir] = 0 # Cut dimension is removed
 
-        # now put all onsite terms for the finite model
-        fin_model.set_onsite(onsite,mode="reset")
+                # Shift the hoppings
+                from_hop_index = hopping[1] + cell_num * self._norb
+                to_hop_index = hopping[2] + (cell_num + jump_fin) * self._norb
 
-        # put all hopping terms
-        for c in range(num): # go over all cells in finite direction
-            for h in range(len(self._hoppings)): # go over all hoppings in one cell
-                # amplitude of the hop is the same
-                amp=self._hoppings[h][0]
-
-                # lattice vector of the hopping
-                ind_R=copy.deepcopy(self._hoppings[h][3])
-                jump_fin=ind_R[fin_dir] # store by how many cells is the hopping in finite direction
-                if fin_model._dim_k!=0:
-                    ind_R[fin_dir]=0 # one of the directions now becomes finite
-
-                # index of "from" and "to" hopping indices
-                hi=self._hoppings[h][1] + c*self._norb
-                #   have to compensate  for the fact that ind_R in finite direction
-                #   will not be used in the finite model
-                hj=self._hoppings[h][2] + (c + jump_fin)*self._norb
-
-                # decide whether this hopping should be added or not
-                to_add=True
-                # if edges are not glued then neglect all jumps that spill out
-                if glue_edgs==False:
-                    if hj<0 or hj>=self._norb*num:
-                        to_add=False
-                # if edges are glued then do mod division to wrap up the hopping
+                # If gluing edges, need to loop around. Otherwise, neglect that hop
+                if glue_edgs:
+                    to_hop_index = to_hop_index % fin_model._norb
+                    to_add = True
                 else:
-                    hj=int(hj)%int(self._norb*num)
+                    to_add = 0 <= to_hop_index < fin_model._norb
 
-                # add hopping to a finite model
-                if to_add==True:
-                    if fin_model._dim_k==0:
-                        fin_model.set_hop(amp,hi,hj,mode="add",allow_conjugate_pair=True)
-                    else:
-                        fin_model.set_hop(amp,hi,hj,ind_R,mode="add",allow_conjugate_pair=True)
+                if to_add:
+                    new_hop=[self._val_to_block(amp),int(from_hop_index),int(to_hop_index)]
+                    if ind_R is not None:
+                        new_hop.append(np.array(ind_R))
+                    hoppings.append(new_hop)
+
+        fin_model._hoppings = hoppings
+        fin_model._update = True # Forces update with new hoppings
 
         return fin_model
 
