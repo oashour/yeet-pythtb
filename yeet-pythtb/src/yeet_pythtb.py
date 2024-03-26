@@ -1539,19 +1539,19 @@ matrix.""")
         """
 
         # if a single integer is given, convert to a list with one element
-        if type(to_remove).__name__=='int':
+        if isinstance(to_remove, int):
             orb_index=[to_remove]
         else:
             orb_index=copy.deepcopy(to_remove)
 
         # check range of indices
-        for i,orb_ind in enumerate(orb_index):
-            if orb_ind < 0 or orb_ind > self._norb-1 or type(orb_ind).__name__!='int':
-                raise Exception("\n\nSpecified wrong orbitals to remove!")
-        for i,ind1 in enumerate(orb_index):
-            for ind2 in orb_index[i+1:]:
-                if ind1==ind2:
-                    raise Exception("\n\nSpecified duplicate orbitals to remove!")
+        if any(
+            orb_ind < 0 or orb_ind > self._norb - 1 or not isinstance(orb_ind, int)
+            for orb_ind in orb_index
+        ):
+            raise Exception("\n\nSpecified wrong orbitals to remove!")
+        if len(set(orb_index)) != len(orb_index):
+            raise Exception("\n\nSpecified duplicate orbitals to remove!")
 
         # put the orbitals to be removed in desceding order
         orb_index = sorted(orb_index,reverse=True)
@@ -1562,23 +1562,15 @@ matrix.""")
         # adjust some variables in the new model
         ret._norb-=len(orb_index)
         ret._nsta-=len(orb_index)*self._nspin
-        # remove indices one by one
-        for i,orb_ind in enumerate(orb_index):
-            # adjust variables
-            ret._orb = np.delete(ret._orb,orb_ind,0)
-            ret._site_energies = np.delete(ret._site_energies,orb_ind,0)
-            ret._site_energies_specified = np.delete(ret._site_energies_specified,orb_ind)
-            # adjust hopping terms (in reverse)
-            for j in range(len(ret._hoppings)-1,-1,-1):
-                h=ret._hoppings[j]
-                # remove all terms that involve this orbital
-                if h[1]==orb_ind or h[2]==orb_ind:
-                    del ret._hoppings[j]
-                else: # otherwise modify term
-                    if h[1]>orb_ind:
-                        ret._hoppings[j][1]-=1
-                    if h[2]>orb_ind:
-                        ret._hoppings[j][2]-=1
+        ret._orb = np.delete(ret._orb, orb_index, axis=0)
+        ret._site_energies = np.delete(ret._site_energies, orb_index, axis=0)
+        ret._site_energies_specified = np.delete(ret._site_energies_specified, orb_index)
+        # adjust hopping terms
+        ret._hoppings = [h for h in ret._hoppings if h[1] not in orb_index and h[2] not in orb_index]
+        # modify hopping indices
+        for h in ret._hoppings:
+            h[1] -= sum(orb_ind < h[1] for orb_ind in orb_index)
+            h[2] -= sum(orb_ind < h[2] for orb_ind in orb_index)
         # return new model
         return ret
 
