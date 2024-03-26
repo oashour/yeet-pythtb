@@ -1,12 +1,11 @@
 .vscode/settings.json
 .ipynb_checkpoints/test-checkpoint.ipynb
 .DS_Store
-.__pycache__/*.pyc
+__pycache__
 tests/yeet_pythtb.py
 tests/fast_wfarray.py
 tests/fast_spin.py
 tests/fast_scalar.py
-tests/__pycache__/*.pyc
 build/
 dist/
 yeet-pythtb/src/yeet_pythtb.egg-info
